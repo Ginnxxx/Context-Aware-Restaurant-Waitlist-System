@@ -1,0 +1,114 @@
+-- QueueLess milestone 7: live seat occupancy and departure tracking.
+-- Run after 202608140003_push_notifications.sql.
+
+alter table public.venues
+  add column if not exists seat_capacity integer not null default 40
+  check (seat_capacity between 1 and 1000);
+
+alter table public.tickets
+  add column if not exists departed_at timestamptz;
+
+create or replace function public.staff_transition_ticket(
+  target_ticket uuid,
+  next_status public.ticket_status
+)
+returns public.tickets
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  selected_ticket public.tickets;
+  venue_capacity integer;
+  occupied_seats integer;
+begin
+  select * into selected_ticket
+  from public.tickets
+  where id = target_ticket
+  for update;
+
+  if not found then raise exception 'Ticket not found'; end if;
+  if not public.is_venue_staff(selected_ticket.venue_id) then
+    raise exception 'Staff permission required';
+  end if;
+
+  if not (
+    (selected_ticket.status = 'called' and next_status in ('arrived', 'no_show')) or
+    (selected_ticket.status = 'approaching' and next_status in ('called', 'cancelled')) or
+    (selected_ticket.status = 'arrived' and next_status = 'seated') or
+    (selected_ticket.status = 'waiting' and next_status = 'cancelled')
+  ) then
+    raise exception 'Invalid ticket transition from % to %', selected_ticket.status, next_status;
+  end if;
+
+  if next_status = 'seated' then
+    -- Serialise seating changes so two hosts cannot exceed capacity together.
+    select seat_capacity into venue_capacity
+    from public.venues
+    where id = selected_ticket.venue_id
+    for update;
+
+    select coalesce(sum(party_size), 0)::integer into occupied_seats
+    from public.tickets
+    where venue_id = selected_ticket.venue_id
+      and status = 'seated'
+      and departed_at is null;
+
+    if occupied_seats + selected_ticket.party_size > venue_capacity then
+      raise exception 'Not enough seats available (% occupied of %)',
+        occupied_seats, venue_capacity;
+    end if;
+  end if;
+
+  update public.tickets set
+    status = next_status,
+    arrived_at = case when next_status = 'arrived' then now() else arrived_at end,
+    completed_at = case
+      when next_status in ('seated', 'cancelled', 'no_show') then now()
+      else completed_at
+    end,
+    updated_at = now()
+  where id = target_ticket
+  returning * into selected_ticket;
+
+  return selected_ticket;
+end;
+$$;
+
+create or replace function public.release_seated_ticket(target_ticket uuid)
+returns public.tickets
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  selected_ticket public.tickets;
+begin
+  select * into selected_ticket
+  from public.tickets
+  where id = target_ticket
+  for update;
+
+  if not found then raise exception 'Ticket not found'; end if;
+  if not public.is_venue_staff(selected_ticket.venue_id) then
+    raise exception 'Staff permission required';
+  end if;
+  if selected_ticket.status <> 'seated' then
+    raise exception 'Only seated parties can be released';
+  end if;
+  if selected_ticket.departed_at is not null then
+    raise exception 'This party has already departed';
+  end if;
+
+  update public.tickets set
+    departed_at = now(),
+    updated_at = now()
+  where id = target_ticket
+  returning * into selected_ticket;
+
+  return selected_ticket;
+end;
+$$;
+
+revoke all on function public.release_seated_ticket(uuid) from public, anon;
+grant execute on function public.release_seated_ticket(uuid) to authenticated;
