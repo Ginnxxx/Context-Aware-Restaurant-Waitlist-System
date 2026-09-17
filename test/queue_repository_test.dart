@@ -210,4 +210,50 @@ void main() {
       TicketStatus.called,
     );
   });
+
+  test('staff closing queue streams paused status and prevents new customer joins', () async {
+    final repository = DemoQueueRepository();
+
+    // Verify initial open status
+    final initialVenues = await repository.watchVenues().first;
+    expect(initialVenues.first.queueOpen, isTrue);
+
+    // Staff closes queue
+    await repository.setQueueOpen(false);
+
+    // Watch venues should emit queueOpen: false
+    final updatedVenues = await repository.watchVenues().first;
+    expect(updatedVenues.first.queueOpen, isFalse);
+
+    // Joining closed queue should fail
+    expect(
+      () => repository.joinQueue(guestName: 'Late Guest', partySize: 2),
+      throwsA(isA<StateError>()),
+    );
+
+    // Staff re-opens queue
+    await repository.setQueueOpen(true);
+    final reopenedVenues = await repository.watchVenues().first;
+    expect(reopenedVenues.first.queueOpen, isTrue);
+
+    // Joining reopened queue succeeds
+    final ticket = await repository.joinQueue(guestName: 'Reopened Guest', partySize: 2);
+    expect(ticket.status, TicketStatus.waiting);
+  });
+
+  test('getVenueWaitingCount counts active waiting and approaching tickets', () async {
+    final repository = DemoQueueRepository();
+
+    final initialCount = await repository.getVenueWaitingCount();
+    expect(initialCount, greaterThanOrEqualTo(0));
+
+    final ticket1 = await repository.joinQueue(guestName: 'Party 1', partySize: 2);
+    expect(await repository.getVenueWaitingCount(), initialCount + 1);
+
+    await repository.joinQueue(guestName: 'Party 2', partySize: 4);
+    expect(await repository.getVenueWaitingCount(), initialCount + 2);
+
+    await repository.cancelMyTicket(ticket1.id);
+    expect(await repository.getVenueWaitingCount(), initialCount + 1);
+  });
 }

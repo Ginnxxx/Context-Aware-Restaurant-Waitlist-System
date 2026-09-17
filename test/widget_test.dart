@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:queueless/customer/customer_app.dart';
+import 'package:queueless/data/demo_queue_repository.dart';
 import 'package:queueless/staff/staff_app.dart';
 
 void main() {
@@ -61,5 +62,19 @@ void main() {
     expect(find.text('Live queue'), findsWidgets);
     expect(find.text('Maya Chen'), findsOneWidget);
     expect(find.text('Call next'), findsOneWidget);
+  });
+
+  testWidgets('closing queue updates customer app to paused and disables join button', (tester) async {
+    final repository = DemoQueueRepository();
+    await tester.pumpWidget(CustomerApp(repository: repository));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Join the queue'), findsOneWidget);
+
+    await repository.setQueueOpen(false);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Queue is paused'), findsOneWidget);
+    expect(find.text('PAUSED'), findsWidgets);
   });
 }

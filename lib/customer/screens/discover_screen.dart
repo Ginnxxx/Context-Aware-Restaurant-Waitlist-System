@@ -146,6 +146,31 @@ class DiscoverScreen extends StatelessWidget {
                                 ),
                               ),
                             ],
+                            if (!v.queueOpen) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: selected
+                                      ? AppColors.coral.withValues(alpha: 0.3)
+                                      : AppColors.coral.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  'PAUSED',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    color: selected
+                                        ? AppColors.white
+                                        : AppColors.coral,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                         selected: selected,

@@ -18,6 +18,7 @@ import 'screens/discover_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/join_queue_screen.dart';
 import 'screens/no_active_ticket_screen.dart';
+import 'widgets/context_simulator_sheet.dart';
 import 'widgets/qr_pass_dialog.dart';
 
 export 'screens/active_ticket_screen.dart';
@@ -90,6 +91,7 @@ class _CustomerFlowState extends State<CustomerFlow> {
   String? error;
   StreamSubscription<QueueTicket?>? _ticketSubscription;
   StreamSubscription<List<QueueTicket>>? _venueTicketsSubscription;
+  StreamSubscription<List<VenueContext>>? _venuesSubscription;
   Timer? _ticketPollTimer;
   StreamSubscription<DeviceLocation>? _locationSubscription;
   StreamSubscription<PushNotice>? _noticeSubscription;
@@ -131,6 +133,35 @@ class _CustomerFlowState extends State<CustomerFlow> {
           t.status == TicketStatus.approaching);
       setState(() => _venueWaitingCount = waiting.length);
     });
+    _fetchVenueWaitingCount();
+  }
+
+  Future<void> _fetchVenueWaitingCount() async {
+    try {
+      final count = await widget.repository.getVenueWaitingCount(
+        venueId: _venue?.id,
+      );
+      if (mounted && (count > _venueWaitingCount || _venueWaitingCount == 0)) {
+        setState(() => _venueWaitingCount = count);
+      }
+    } catch (_) {}
+  }
+
+  void _subscribeVenues() {
+    _venuesSubscription?.cancel();
+    _venuesSubscription = widget.repository.watchVenues().listen((venuesList) {
+      if (!mounted || venuesList.isEmpty) return;
+      setState(() {
+        _venues = venuesList;
+        final updated = venuesList.firstWhere(
+          (v) => v.id == _venue?.id,
+          orElse: () => venuesList.first,
+        );
+        _venue = updated;
+        _refreshContext();
+      });
+      _subscribeVenueTickets();
+    });
   }
 
   Future<void> _initCustomerApp() async {
@@ -160,6 +191,7 @@ class _CustomerFlowState extends State<CustomerFlow> {
     }
 
     if (!mounted) return;
+    _subscribeVenues();
     _subscribeVenueTickets();
 
     if (widget.pushNotificationService.isSupported) {
@@ -229,9 +261,20 @@ class _CustomerFlowState extends State<CustomerFlow> {
       final authorized = await widget.pushNotificationService.isAuthorized();
       if (!authorized) return;
       await widget.pushNotificationService.enable(widget.repository);
-      if (mounted) setState(() => alertsActive = true);
-    } catch (exception) {
-      if (mounted) setState(() => alertsError = exception.toString());
+      if (mounted) {
+        setState(() {
+          alertsActive = true;
+          alertsError = null;
+        });
+      }
+    } catch (_) {
+      // In background restore, do not show noisy network/FCM registration errors on screen.
+      if (mounted) {
+        setState(() {
+          alertsActive = false;
+          alertsError = null;
+        });
+      }
     }
   }
 
@@ -239,6 +282,7 @@ class _CustomerFlowState extends State<CustomerFlow> {
   void dispose() {
     _ticketSubscription?.cancel();
     _venueTicketsSubscription?.cancel();
+    _venuesSubscription?.cancel();
     _ticketPollTimer?.cancel();
     _locationSubscription?.cancel();
     _noticeSubscription?.cancel();
@@ -266,9 +310,11 @@ class _CustomerFlowState extends State<CustomerFlow> {
       if (mounted && venuesList.isNotEmpty) {
         setState(() {
           _venues = venuesList;
-          if (_venue == null || !_venues.any((v) => v.id == _venue!.id)) {
-            _venue = venuesList.first;
-          }
+          final updated = venuesList.firstWhere(
+            (v) => v.id == _venue?.id,
+            orElse: () => venuesList.first,
+          );
+          _venue = updated;
           _refreshContext();
         });
         _subscribeVenueTickets();
@@ -398,9 +444,30 @@ class _CustomerFlowState extends State<CustomerFlow> {
     });
     try {
       await widget.pushNotificationService.enable(widget.repository);
-      if (mounted) setState(() => alertsActive = true);
+      if (mounted) {
+        setState(() {
+          alertsActive = true;
+          alertsError = null;
+        });
+      }
     } catch (exception) {
-      if (mounted) setState(() => alertsError = exception.toString());
+      if (mounted) {
+        String message = exception.toString();
+        if (exception is StateError) {
+          message = exception.message;
+        } else if (message.contains('FCM Registration failed') ||
+            message.contains('SERVICE_NOT_AVAILABLE') ||
+            message.contains('IOException')) {
+          message =
+              'Google notification server unreachable. Check internet or VPN.';
+        } else if (message.startsWith('Exception: ')) {
+          message = message.substring('Exception: '.length);
+        }
+        setState(() {
+          alertsActive = false;
+          alertsError = message;
+        });
+      }
     } finally {
       if (mounted) setState(() => alertsBusy = false);
     }
@@ -423,6 +490,12 @@ class _CustomerFlowState extends State<CustomerFlow> {
   void go(CustomerStep next) => setState(() => step = next);
 
   Future<void> joinQueue() async {
+    if (_venue != null && !_venue!.queueOpen) {
+      setState(() {
+        error = 'The queue for ${_venue!.name} is currently paused.';
+      });
+      return;
+    }
     setState(() {
       busy = true;
       error = null;
@@ -731,6 +804,7 @@ class _CustomerFlowState extends State<CustomerFlow> {
         busy: busy,
         error: error,
         demoMode: widget.repository.isDemo,
+        venue: _venue,
         onNameChanged: (value) => guestName = value,
         onPartyChanged: (value) => setState(() => partySize = value),
         onBack: () => go(CustomerStep.discover),
@@ -801,6 +875,14 @@ class _CustomerFlowState extends State<CustomerFlow> {
                   });
                 }
               },
+              onSimulate: () => ContextSimulatorSheet.show(
+                context,
+                onSimulateFar: _simulateFarContext,
+                onSimulateApproaching: _simulateApproachingContext,
+                onSimulateNear: _simulateNearContext,
+                onSimulateDeparture: _simulateDepartureContext,
+                currentBand: contextSnapshot?.proximity,
+              ),
             ),
       HistoryScreen(
         key: ValueKey(historyRevision),

@@ -71,7 +71,11 @@ class _StaffSettingsPageState extends State<StaffSettingsPage> {
   @override
   void didUpdateWidget(covariant StaffSettingsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.venue != widget.venue && !saving) _load(widget.venue);
+    // Only reload form fields if the user switched to a different venue/branch,
+    // NOT on periodic background stream polls of the same venue.
+    if (oldWidget.venue?.id != widget.venue?.id && !saving) {
+      _load(widget.venue);
+    }
   }
 
   void _load(VenueContext? venue) {

@@ -36,6 +36,7 @@ class ActiveTicketScreen extends StatelessWidget {
     this.venue,
     this.customerLocation,
     this.onRouteCalculated,
+    this.onSimulate,
   });
 
   final QueueTicket ticket;
@@ -64,6 +65,7 @@ class ActiveTicketScreen extends StatelessWidget {
   final DeviceLocation? customerLocation;
   final void Function(double roadDistanceMeters, int roadTravelMinutes)?
       onRouteCalculated;
+  final VoidCallback? onSimulate;
 
   String get _shortTicketId {
     final raw = ticket.id;
@@ -121,10 +123,20 @@ class ActiveTicketScreen extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const BrandMark(),
-                      IconButton(
-                        onPressed: () {},
-                        icon: const Icon(Icons.more_horiz_rounded),
-                      ),
+                      if (onSimulate != null)
+                        IconButton(
+                          tooltip: 'Context Simulator (MUC)',
+                          onPressed: onSimulate,
+                          icon: const Icon(
+                            Icons.science_outlined,
+                            color: AppColors.forest,
+                          ),
+                        )
+                      else
+                        IconButton(
+                          onPressed: () {},
+                          icon: const Icon(Icons.more_horiz_rounded),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 34),
@@ -455,16 +467,10 @@ class ActiveTicketScreen extends StatelessWidget {
                                   ),
                                 ),
                               )
-                            else if (alertsError != null)
-                              IconButton(
-                                tooltip: 'Open app settings',
-                                onPressed: onOpenLocationSettings,
-                                icon: const Icon(Icons.settings_outlined),
-                              )
                             else
                               Switch(
                                 value: alertsActive,
-                                onChanged: alertsActive
+                                onChanged: (!alertsSupported || alertsActive)
                                     ? null
                                     : (_) => onEnableAlerts(),
                               ),

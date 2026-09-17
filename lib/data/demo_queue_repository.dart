@@ -104,6 +104,7 @@ class DemoQueueRepository implements QueueRepository {
   final List<QueueTicket> _history = [];
   final _venueController = StreamController<List<QueueTicket>>.broadcast();
   final _mineController = StreamController<QueueTicket?>.broadcast();
+  final _venuesController = StreamController<List<VenueContext>>.broadcast();
 
   @override
   bool get isDemo => true;
@@ -146,6 +147,18 @@ class DemoQueueRepository implements QueueRepository {
   }
 
   @override
+  Future<int> getVenueWaitingCount({String? venueId}) async {
+    final vId = venueId ?? _activeVenueId;
+    return _tickets
+        .where((t) =>
+            t.venueId == vId &&
+            (t.status == TicketStatus.waiting ||
+                t.status == TicketStatus.called ||
+                t.status == TicketStatus.approaching))
+        .length;
+  }
+
+  @override
   Future<VenueContext> getVenueContext({String? venueId}) async {
     final vId = venueId ?? _activeVenueId;
     return _venues.firstWhere(
@@ -156,6 +169,18 @@ class DemoQueueRepository implements QueueRepository {
 
   @override
   Future<List<VenueContext>> getAllVenues() async => List.unmodifiable(_venues);
+
+  @override
+  Stream<List<VenueContext>> watchVenues() async* {
+    yield List.unmodifiable(_venues);
+    yield* _venuesController.stream;
+  }
+
+  void _emitVenues() {
+    if (!_venuesController.isClosed) {
+      _venuesController.add(List.unmodifiable(_venues));
+    }
+  }
 
   @override
   Future<VenueContext> createVenue({
@@ -181,6 +206,7 @@ class DemoQueueRepository implements QueueRepository {
     );
     _venues.add(newVenue);
     _activeVenueId = newVenue.id;
+    _emitVenues();
     return newVenue;
   }
 
@@ -229,6 +255,9 @@ class DemoQueueRepository implements QueueRepository {
   }) async {
     final vId = venueId ?? _activeVenueId;
     final venue = await getVenueContext(venueId: vId);
+    if (!venue.queueOpen) {
+      throw StateError('The queue for ${venue.name} is currently paused.');
+    }
     final venueTickets = _tickets.where((t) => t.venueId == vId).toList();
     final activeAhead = venueTickets
         .where(
@@ -443,6 +472,7 @@ class DemoQueueRepository implements QueueRepository {
     final index = _venues.indexWhere((v) => v.id == vId);
     if (index >= 0) {
       _venues[index] = _venues[index].copyWith(queueOpen: open);
+      _emitVenues();
     }
   }
 
@@ -477,6 +507,7 @@ class DemoQueueRepository implements QueueRepository {
     } else {
       _venues.add(updated);
     }
+    _emitVenues();
     return updated;
   }
 

@@ -31,6 +31,7 @@ class _StaffDashboardState extends State<StaffDashboard> {
   bool queueOpen = true;
   List<QueueTicket> tickets = const [];
   StreamSubscription<List<QueueTicket>>? _subscription;
+  StreamSubscription<List<VenueContext>>? _venuesSubscription;
   String? error;
   final Set<String> _busyTickets = <String>{};
 
@@ -38,6 +39,7 @@ class _StaffDashboardState extends State<StaffDashboard> {
   void initState() {
     super.initState();
     _loadVenues();
+    _subscribeVenues();
   }
 
   void _loadVenues() {
@@ -78,14 +80,46 @@ class _StaffDashboardState extends State<StaffDashboard> {
     _subscription?.cancel();
     _subscription = widget.repository.watchVenueTickets(venueId: venueId).listen(
       (value) => mounted ? setState(() => tickets = value) : null,
-      onError: (Object value) =>
-          mounted ? setState(() => error = value.toString()) : null,
+      onError: (Object value) {
+        final msg = value.toString();
+        // Ignore normal transport-level websocket blips / reconnects (code 1006)
+        // since Supabase automatically reconnects without breaking functions.
+        if (msg.contains('1006') ||
+            msg.contains('WebSocketChannelException') ||
+            msg.contains('channelError')) {
+          return;
+        }
+        if (mounted) setState(() => error = value.toString());
+      },
+    );
+  }
+
+  void _subscribeVenues() {
+    _venuesSubscription?.cancel();
+    _venuesSubscription = widget.repository.watchVenues().listen(
+      (venuesList) {
+        if (!mounted || venuesList.isEmpty) return;
+        setState(() {
+          _venues = venuesList;
+          final currentId = venue?.id;
+          final matching = venuesList.firstWhere(
+            (v) => v.id == currentId,
+            orElse: () => venuesList.first,
+          );
+          venue = matching;
+          queueOpen = matching.queueOpen;
+        });
+      },
+      onError: (_) {
+        // Suppress websocket reconnect errors on venue watch
+      },
     );
   }
 
   @override
   void dispose() {
     _subscription?.cancel();
+    _venuesSubscription?.cancel();
     super.dispose();
   }
 
@@ -121,6 +155,13 @@ class _StaffDashboardState extends State<StaffDashboard> {
         if (override == true) {
           await callNext(force: true);
         }
+      } else if (msg.contains('No waiting parties')) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No parties are currently waiting in queue.'),
+          ),
+        );
       } else {
         if (mounted) setState(() => error = exception.toString());
       }
@@ -354,7 +395,12 @@ class _StaffDashboardState extends State<StaffDashboard> {
       onQueueChanged: (value) async {
         try {
           await widget.repository.setQueueOpen(value, venueId: venue?.id);
-          if (mounted) setState(() => queueOpen = value);
+          if (mounted) {
+            setState(() {
+              queueOpen = value;
+              venue = venue?.copyWith(queueOpen: value);
+            });
+          }
         } catch (exception) {
           if (mounted) setState(() => error = exception.toString());
         }

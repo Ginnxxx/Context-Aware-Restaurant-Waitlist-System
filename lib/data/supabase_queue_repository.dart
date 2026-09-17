@@ -178,6 +178,29 @@ class SupabaseQueueRepository implements QueueRepository {
   }
 
   @override
+  Future<int> getVenueWaitingCount({String? venueId}) async {
+    final vId = venueId ?? AppConfig.venueId;
+    try {
+      final res = await _client.rpc('get_venue_waiting_count', params: {
+        'target_venue': vId,
+      });
+      if (res is int) return res;
+      if (res is num) return res.toInt();
+    } catch (_) {}
+
+    try {
+      final rows = await _client
+          .from('tickets')
+          .select('id')
+          .eq('venue_id', vId)
+          .inFilter('status', ['waiting', 'approaching', 'called']);
+      return (rows as List).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  @override
   Future<VenueContext> getVenueContext({String? venueId}) async {
     if (venueId != null) {
       final response = await _client
@@ -221,6 +244,43 @@ class SupabaseQueueRepository implements QueueRepository {
         .order('name');
     final rows = (response as List).cast<Map<String, dynamic>>();
     return rows.map((row) => VenueContext.fromMap(row)).toList();
+  }
+
+  @override
+  Stream<List<VenueContext>> watchVenues() {
+    final controller = StreamController<List<VenueContext>>.broadcast();
+    Timer? pollTimer;
+    StreamSubscription? streamSub;
+
+    Future<void> emitLatest() async {
+      try {
+        final venues = await getAllVenues();
+        if (!controller.isClosed) controller.add(venues);
+      } catch (error) {
+        if (!controller.isClosed) controller.addError(error);
+      }
+    }
+
+    emitLatest();
+
+    try {
+      streamSub = _client
+          .from('venues')
+          .stream(primaryKey: ['id'])
+          .listen((rows) {
+            final venues = rows.map(VenueContext.fromMap).toList();
+            if (!controller.isClosed) controller.add(venues);
+          }, onError: (_) {});
+    } catch (_) {}
+
+    pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => emitLatest());
+
+    controller.onCancel = () {
+      pollTimer?.cancel();
+      streamSub?.cancel();
+    };
+
+    return controller.stream;
   }
 
   @override
@@ -394,10 +454,20 @@ class SupabaseQueueRepository implements QueueRepository {
       final venues = await getAllVenues();
       vId = venues.isNotEmpty ? venues.first.id : AppConfig.venueId;
     }
-    await _client
-        .from('venues')
-        .update({'queue_open': open})
-        .eq('id', vId);
+    try {
+      await _client.rpc(
+        'set_venue_queue_open',
+        params: {
+          'target_venue': vId,
+          'is_open': open,
+        },
+      );
+    } catch (_) {
+      await _client
+          .from('venues')
+          .update({'queue_open': open})
+          .eq('id', vId);
+    }
   }
 
   @override
@@ -417,21 +487,40 @@ class SupabaseQueueRepository implements QueueRepository {
       final venues = await getAllVenues();
       vId = venues.isNotEmpty ? venues.first.id : AppConfig.venueId;
     }
-    final response = await _client.rpc(
-      'update_venue_settings_v2',
-      params: {
-        'target_venue': vId,
-        'venue_name': name.trim(),
-        'venue_address': address.trim(),
-        'venue_lat': latitude,
-        'venue_lng': longitude,
-        'turnover_mins': averageTurnoverMinutes,
-        'outer_meters': outerGeofenceMeters,
-        'arrival_meters': arrivalGeofenceMeters,
-        'capacity': seatCapacity,
-      },
-    );
-    return VenueContext.fromMap(Map<String, dynamic>.from(response as Map));
+    try {
+      final response = await _client.rpc(
+        'update_venue_settings_v2',
+        params: {
+          'target_venue': vId,
+          'venue_name': name.trim(),
+          'venue_address': address.trim(),
+          'venue_lat': latitude,
+          'venue_lng': longitude,
+          'turnover_mins': averageTurnoverMinutes,
+          'outer_meters': outerGeofenceMeters,
+          'arrival_meters': arrivalGeofenceMeters,
+          'capacity': seatCapacity,
+        },
+      );
+      return VenueContext.fromMap(Map<String, dynamic>.from(response as Map));
+    } catch (_) {
+      final response = await _client
+          .from('venues')
+          .update({
+            'name': name.trim(),
+            'address': address.trim(),
+            'latitude': latitude,
+            'longitude': longitude,
+            'average_turnover_minutes': averageTurnoverMinutes,
+            'outer_geofence_meters': outerGeofenceMeters,
+            'arrival_geofence_meters': arrivalGeofenceMeters,
+            'seat_capacity': seatCapacity,
+          })
+          .eq('id', vId)
+          .select()
+          .single();
+      return VenueContext.fromMap(Map<String, dynamic>.from(response));
+    }
   }
 
   @override

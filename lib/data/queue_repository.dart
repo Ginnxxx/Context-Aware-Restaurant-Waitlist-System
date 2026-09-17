@@ -21,9 +21,13 @@ abstract interface class QueueRepository {
 
   Stream<List<QueueTicket>> watchVenueTickets({String? venueId});
 
+  Future<int> getVenueWaitingCount({String? venueId});
+
   Future<VenueContext> getVenueContext({String? venueId});
 
   Future<List<VenueContext>> getAllVenues();
+
+  Stream<List<VenueContext>> watchVenues();
 
   Future<VenueContext> createVenue({
     required String name,

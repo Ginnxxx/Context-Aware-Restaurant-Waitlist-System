@@ -31,21 +31,32 @@ class PushNotificationService {
 
   Future<void> initialize() async {
     if (!isSupported || _initialized) return;
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: AppConfig.firebaseApiKey,
-        appId: AppConfig.firebaseAppId,
-        messagingSenderId: AppConfig.firebaseMessagingSenderId,
-        projectId: AppConfig.firebaseProjectId,
-      ),
-    );
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: const FirebaseOptions(
+            apiKey: AppConfig.firebaseApiKey,
+            appId: AppConfig.firebaseAppId,
+            messagingSenderId: AppConfig.firebaseMessagingSenderId,
+            projectId: AppConfig.firebaseProjectId,
+          ),
+        );
+      }
+    } on FirebaseException catch (e) {
+      if (e.code != 'duplicate-app') rethrow;
+    } catch (_) {
+      if (Firebase.apps.isEmpty) rethrow;
+    }
+
     FirebaseMessaging.onBackgroundMessage(queueLessPushBackgroundHandler);
     _foregroundSubscription = FirebaseMessaging.onMessage.listen(_emitNotice);
     _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen(
       _emitNotice,
     );
-    final initial = await FirebaseMessaging.instance.getInitialMessage();
-    if (initial != null) _emitNotice(initial);
+    try {
+      final initial = await FirebaseMessaging.instance.getInitialMessage();
+      if (initial != null) _emitNotice(initial);
+    } catch (_) {}
     _initialized = true;
   }
 
@@ -53,12 +64,25 @@ class PushNotificationService {
     if (!isSupported) {
       throw StateError('Firebase Cloud Messaging is not configured.');
     }
-    await initialize();
-    final settings = await FirebaseMessaging.instance.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+    try {
+      await initialize();
+    } catch (_) {
+      throw StateError('Failed to initialize push notifications.');
+    }
+
+    NotificationSettings settings;
+    try {
+      settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+    } catch (_) {
+      throw StateError(
+        'Unable to reach Google notification services. Please check your network or VPN.',
+      );
+    }
+
     if (settings.authorizationStatus != AuthorizationStatus.authorized &&
         settings.authorizationStatus != AuthorizationStatus.provisional) {
       throw StateError(
@@ -66,7 +90,16 @@ class PushNotificationService {
       );
     }
 
-    final token = await FirebaseMessaging.instance.getToken();
+    String? token;
+    try {
+      token = await FirebaseMessaging.instance.getToken().timeout(
+        const Duration(seconds: 8),
+      );
+    } catch (_) {
+      throw StateError(
+        'Unable to reach Google notification server. Please verify your internet connection or VPN.',
+      );
+    }
     if (token == null || token.isEmpty) {
       throw StateError('Firebase could not create a notification token.');
     }
@@ -79,10 +112,15 @@ class PushNotificationService {
 
   Future<bool> isAuthorized() async {
     if (!isSupported) return false;
-    await initialize();
-    final settings = await FirebaseMessaging.instance.getNotificationSettings();
-    return settings.authorizationStatus == AuthorizationStatus.authorized ||
-        settings.authorizationStatus == AuthorizationStatus.provisional;
+    try {
+      await initialize();
+      final settings =
+          await FirebaseMessaging.instance.getNotificationSettings();
+      return settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _saveToken(QueueRepository repository, String token) =>

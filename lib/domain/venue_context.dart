@@ -59,4 +59,34 @@ class VenueContext {
     seatCapacity: (map['seat_capacity'] as num?)?.toInt() ?? 40,
     queueOpen: map['queue_open'] as bool? ?? true,
   );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VenueContext &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          address == other.address &&
+          latitude == other.latitude &&
+          longitude == other.longitude &&
+          averageTurnoverMinutes == other.averageTurnoverMinutes &&
+          outerGeofenceMeters == other.outerGeofenceMeters &&
+          arrivalGeofenceMeters == other.arrivalGeofenceMeters &&
+          seatCapacity == other.seatCapacity &&
+          queueOpen == other.queueOpen;
+
+  @override
+  int get hashCode => Object.hash(
+        id,
+        name,
+        address,
+        latitude,
+        longitude,
+        averageTurnoverMinutes,
+        outerGeofenceMeters,
+        arrivalGeofenceMeters,
+        seatCapacity,
+        queueOpen,
+      );
 }
